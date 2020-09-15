@@ -1,0 +1,66 @@
+# MixTaxonomyApi
+
+All URIs are relative to *https://demo.fineract.dev/fineract-provider/api/v1*
+
+Method | HTTP request | Description
+------------- | ------------- | -------------
+[**retrieveAll14**](MixTaxonomyApi.md#retrieveAll14) | **GET** mixtaxonomy | 
+
+<a name="retrieveAll14"></a>
+# **retrieveAll14**
+> String retrieveAll14()
+
+
+
+### Example
+```java
+ApiClient defaultClient = new ApiClient();
+
+// Uncomment this if you want to use HTTP basic authorization: "basicAuth"
+//defaultClient = new ApiClient("basicAuth");
+//defaultClient.setCredentials("YOUR USERNAME", "YOUR PASSWORD");
+
+
+// API Key Authorization: "tenantid"
+// USE THIS IF YOU ARE TESTING THE LIBRARY
+defaultClient = new ApiClient("tenantid");
+defaultClient.setApiKey("default");
+
+// Uncomment this if you are using OAuth2 access token for authorization: "tenantid"
+//OAuth tenantid = (OAuth) defaultClient.getAuthentication("tenantid");
+//tenantid.setAccessToken("YOUR ACCESS TOKEN");
+
+MixTaxonomyApi apiService = defaultClient.createService(MixTaxonomyApi.class);
+
+// Initialize these parameters earlier.
+Call<String> call = apiService.retrieveAll14();
+call.enqueue(new Callback<String>() {
+    @Override
+    public void onResponse(Call<String> call, Response<String> response) {
+        System.out.println(call.toString() + "\n" + response.toString());
+    }
+
+    @Override
+    public void onFailure(Call<String> call, Throwable t) {
+        System.out.println(t.getMessage());
+    }
+});
+
+```
+
+### Parameters
+This endpoint does not need any parameter.
+
+### Return type
+
+**String**
+
+### Authorization
+
+[basicAuth](../README.md#basicAuth), [tenantid](../README.md#tenantid)
+
+### HTTP request headers
+
+ - **Content-Type**: Not defined
+ - **Accept**: application/json
+
