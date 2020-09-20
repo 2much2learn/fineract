@@ -3,10 +3,7 @@ package org.apache.fineract.client;
 import com.google.gson.Gson;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonElement;
-import okhttp3.Interceptor;
-import okhttp3.OkHttpClient;
-import okhttp3.RequestBody;
-import okhttp3.ResponseBody;
+import okhttp3.*;
 import org.apache.oltu.oauth2.client.request.OAuthClientRequest.AuthenticationRequestBuilder;
 import org.apache.oltu.oauth2.client.request.OAuthClientRequest.TokenRequestBuilder;
 import retrofit2.Converter;
@@ -19,9 +16,13 @@ import org.apache.fineract.client.auth.OAuth;
 import org.apache.fineract.client.auth.OAuth.AccessTokenListener;
 import org.apache.fineract.client.auth.OAuthFlow;
 
+import javax.net.ssl.*;
 import java.io.IOException;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
+import java.security.SecureRandom;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.text.DateFormat;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
@@ -35,110 +36,38 @@ public class ApiClient {
   private Retrofit.Builder adapterBuilder;
   private JSON json;
 
-  public ApiClient() {
-    apiAuthorizations = new LinkedHashMap<String, Interceptor>();
-    //createDefaultAdapter();
-  }
-
   public static ApiClient initializeApiClient(String baseUrl, String userName, String password) {
 
     ApiClient apiClient = new ApiClient();
-    apiClient.createDefaultAdapter(baseUrl, false);
-    apiClient.setCredentials(userName,  password);
+    apiClient.createDefaultAdapter(baseUrl, userName, password);
 
     return apiClient;
   }
 
-  public ApiClient(String[] authNames) {
-    this();
-    for(String authName : authNames) {
-      Interceptor auth;
-      if ("basicAuth".equals(authName)) {
-        auth = new HttpBasicAuth();
-      } else if ("tenantid".equals(authName)) {
-        auth = new ApiKeyAuth("header", "fineract-platform-tenantid");
-      } else {
-        throw new RuntimeException("auth name \"" + authName + "\" not found in available auth names");
-      }
-
-      addAuthorization(authName, auth);
-    }
-  }
-
-  /**
-   * Basic constructor for single auth name
-   * @param authName Authentication name
-   */
-  public ApiClient(String authName) {
-    this(new String[]{authName});
-  }
-
-  /**
-   * Helper constructor for single api key
-   * @param authName Authentication name
-   * @param apiKey API key
-   */
-  public ApiClient(String authName, String apiKey) {
-    this(authName);
-    this.setApiKey(apiKey);
-  }
-
-  /**
-   * Helper constructor for single basic auth or password oauth2
-   * @param authName Authentication name
-   * @param username Username
-   * @param password Password
-   */
-  public ApiClient(String authName, String username, String password) {
-    this(authName);
-    this.setCredentials(username,  password);
-  }
-
-  /**
-   * Helper constructor for single password oauth2
-   * @param authName Authentication name
-   * @param clientId Client ID
-   * @param secret Client Secret
-   * @param username Username
-   * @param password Password
-   */
-  public ApiClient(String authName, String clientId, String secret, String username, String password) {
-    this(authName);
-    this.getTokenEndPoint()
-      .setClientId(clientId)
-      .setClientSecret(secret)
-      .setUsername(username)
-      .setPassword(password);
-  }
-
-  public void createDefaultAdapter() {
-    createDefaultAdapter("https://demo.fineract.dev/fineract-provider/api/v1", true);
-  }
-
-  public void createDefaultAdapter(String baseUrl, boolean verifySSL) {
+  public void createDefaultAdapter(String baseUrl, String userName, String password) {
     json = new JSON();
-    okBuilder = new OkHttpClient.Builder();
+    okBuilder = UnsafeOkHttpClient.getUnsafeOkHttpClient(userName, password);
+    okBuilder.addInterceptor(chain -> {
+      Request request = chain.request().newBuilder().addHeader("Fineract-Platform-TenantId", "default").build();
+      return chain.proceed(request);
+    });
 
     if (!baseUrl.endsWith("/"))
       baseUrl = baseUrl + "/";
 
-    adapterBuilder = new Retrofit.Builder();
-    if(!verifySSL) {
-      System.out.println("====> verifySSL :: "+verifySSL);
-      //adapterBuilder.client(UnsafeOkHttpClient.getUnsafeOkHttpClient());
-    }
     adapterBuilder
-            .baseUrl(baseUrl)
-            .addConverterFactory(ScalarsConverterFactory.create())
-            .addConverterFactory(GsonCustomConverterFactory.create(json.getGson()));
-
+        = new Retrofit.Builder()
+          .baseUrl(baseUrl)
+          .client(okBuilder.build())
+          .addConverterFactory(ScalarsConverterFactory.create())
+          .addConverterFactory(GsonCustomConverterFactory.create(json.getGson()));;
   }
 
   public <S> S createService(Class<S> serviceClass) {
     return adapterBuilder
-      .client(okBuilder.build())
-      .build()
-      .create(serviceClass);
+            .client(okBuilder.build())
+            .build()
+            .create(serviceClass);
   }
 
   public ApiClient setDateFormat(DateFormat dateFormat) {
@@ -161,153 +90,6 @@ public class ApiClient {
     return this;
   }
 
-
-  /**
-   * Helper method to configure the first api key found
-   * @param apiKey API key
-   * @return ApiClient
-   */
-  public ApiClient setApiKey(String apiKey) {
-    for(Interceptor apiAuthorization : apiAuthorizations.values()) {
-      if (apiAuthorization instanceof ApiKeyAuth) {
-        ApiKeyAuth keyAuth = (ApiKeyAuth) apiAuthorization;
-        keyAuth.setApiKey(apiKey);
-        return this;
-      }
-    }
-    return this;
-  }
-
-  /**
-   * Helper method to configure the username/password for basic auth or password oauth
-   * @param username Username
-   * @param password Password
-   * @return ApiClient
-   */
-  public ApiClient setCredentials(String username, String password) {
-    for(Interceptor apiAuthorization : apiAuthorizations.values()) {
-      if (apiAuthorization instanceof HttpBasicAuth) {
-        HttpBasicAuth basicAuth = (HttpBasicAuth) apiAuthorization;
-        basicAuth.setCredentials(username, password);
-        return this;
-      }
-      if (apiAuthorization instanceof OAuth) {
-        OAuth oauth = (OAuth) apiAuthorization;
-        oauth.getTokenRequestBuilder().setUsername(username).setPassword(password);
-        return this;
-      }
-    }
-    return this;
-  }
-
-  /**
-   * Helper method to configure the token endpoint of the first oauth found in the apiAuthorizations (there should be only one)
-   * @return Token request builder
-   */
-  public TokenRequestBuilder getTokenEndPoint() {
-    for(Interceptor apiAuthorization : apiAuthorizations.values()) {
-      if (apiAuthorization instanceof OAuth) {
-        OAuth oauth = (OAuth) apiAuthorization;
-        return oauth.getTokenRequestBuilder();
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Helper method to configure authorization endpoint of the first oauth found in the apiAuthorizations (there should be only one)
-   * @return Authentication request builder
-   */
-  public AuthenticationRequestBuilder getAuthorizationEndPoint() {
-    for(Interceptor apiAuthorization : apiAuthorizations.values()) {
-      if (apiAuthorization instanceof OAuth) {
-        OAuth oauth = (OAuth) apiAuthorization;
-        return oauth.getAuthenticationRequestBuilder();
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Helper method to pre-set the oauth access token of the first oauth found in the apiAuthorizations (there should be only one)
-   * @param accessToken Access token
-   * @return ApiClient
-   */
-  public ApiClient setAccessToken(String accessToken) {
-    for(Interceptor apiAuthorization : apiAuthorizations.values()) {
-      if (apiAuthorization instanceof OAuth) {
-        OAuth oauth = (OAuth) apiAuthorization;
-        oauth.setAccessToken(accessToken);
-        return this;
-      }
-    }
-    return this;
-  }
-
-  /**
-   * Helper method to configure the oauth accessCode/implicit flow parameters
-   * @param clientId Client ID
-   * @param clientSecret Client secret
-   * @param redirectURI Redirect URI
-   * @return ApiClient
-   */
-  public ApiClient configureAuthorizationFlow(String clientId, String clientSecret, String redirectURI) {
-    for(Interceptor apiAuthorization : apiAuthorizations.values()) {
-      if (apiAuthorization instanceof OAuth) {
-        OAuth oauth = (OAuth) apiAuthorization;
-        oauth.getTokenRequestBuilder()
-          .setClientId(clientId)
-          .setClientSecret(clientSecret)
-          .setRedirectURI(redirectURI);
-        oauth.getAuthenticationRequestBuilder()
-          .setClientId(clientId)
-          .setRedirectURI(redirectURI);
-        return this;
-      }
-    }
-    return this;
-  }
-
-  /**
-   * Configures a listener which is notified when a new access token is received.
-   * @param accessTokenListener Access token listener
-   * @return ApiClient
-   */
-  public ApiClient registerAccessTokenListener(AccessTokenListener accessTokenListener) {
-    for(Interceptor apiAuthorization : apiAuthorizations.values()) {
-      if (apiAuthorization instanceof OAuth) {
-        OAuth oauth = (OAuth) apiAuthorization;
-        oauth.registerAccessTokenListener(accessTokenListener);
-        return this;
-      }
-    }
-    return this;
-  }
-
-  /**
-   * Adds an authorization to be used by the client
-   * @param authName Authentication name
-   * @param authorization Authorization interceptor
-   * @return ApiClient
-   */
-  public ApiClient addAuthorization(String authName, Interceptor authorization) {
-    if (apiAuthorizations.containsKey(authName)) {
-      throw new RuntimeException("auth name \"" + authName + "\" already in api authorizations");
-    }
-    apiAuthorizations.put(authName, authorization);
-    okBuilder.addInterceptor(authorization);
-    return this;
-  }
-
-  public Map<String, Interceptor> getApiAuthorizations() {
-    return apiAuthorizations;
-  }
-
-  public ApiClient setApiAuthorizations(Map<String, Interceptor> apiAuthorizations) {
-    this.apiAuthorizations = apiAuthorizations;
-    return this;
-  }
-
   public Retrofit.Builder getAdapterBuilder() {
     return adapterBuilder;
   }
@@ -321,43 +103,54 @@ public class ApiClient {
     return okBuilder;
   }
 
-  public void addAuthsToOkBuilder(OkHttpClient.Builder okBuilder) {
-    for(Interceptor apiAuthorization : apiAuthorizations.values()) {
-      okBuilder.addInterceptor(apiAuthorization);
-    }
-  }
-
-  /**
-   * Clones the okBuilder given in parameter, adds the auth interceptors and uses it to configure the Retrofit
-   * @param okClient An instance of OK HTTP client
-   */
-  public void configureFromOkclient(OkHttpClient okClient) {
-    this.okBuilder = okClient.newBuilder();
-    addAuthsToOkBuilder(this.okBuilder);
-  }
 }
 
-/**
- * This wrapper is to take care of this case:
- * when the deserialization fails due to JsonParseException and the
- * expected type is String, then just return the body string.
- */
-class GsonResponseBodyConverterToString<T> implements Converter<ResponseBody, T> {
-  private final Gson gson;
-  private final Type type;
-
-  GsonResponseBodyConverterToString(Gson gson, Type type) {
-    this.gson = gson;
-    this.type = type;
-  }
-
-  @Override public T convert(ResponseBody value) throws IOException {
-    String returned = value.string();
+class UnsafeOkHttpClient {
+  public static OkHttpClient.Builder getUnsafeOkHttpClient(String userName, String password) {
     try {
-      return gson.fromJson(returned, type);
-    }
-    catch (JsonParseException e) {
-      return (T) returned;
+      // Create a trust manager that does not validate certificate chains
+      final TrustManager[] trustAllCerts = new TrustManager[] {
+              new X509TrustManager() {
+                @Override
+                public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {
+                }
+
+                @Override
+                public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {
+                }
+
+                @Override
+                public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                  return new java.security.cert.X509Certificate[]{};
+                }
+              }
+      };
+
+      // Install the all-trusting trust manager
+      final SSLContext sslContext = SSLContext.getInstance("SSL");
+      sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
+
+      // Create an ssl socket factory with our all-trusting manager
+      final SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
+
+      OkHttpClient.Builder builder = new OkHttpClient.Builder();
+      builder.authenticator(new Authenticator() {
+        public Request authenticate(Route route, okhttp3.Response response) throws IOException {
+          String credential = Credentials.basic(userName, password);
+          return response.request().newBuilder().header("Authorization", credential).build();
+        }
+      });
+      builder.sslSocketFactory(sslSocketFactory, (X509TrustManager)trustAllCerts[0]);
+      builder.hostnameVerifier(new HostnameVerifier() {
+        @Override
+        public boolean verify(String hostname, SSLSession session) {
+          return true;
+        }
+      });
+
+      return builder;
+    } catch (Exception e) {
+      throw new RuntimeException(e);
     }
   }
 }
@@ -389,5 +182,30 @@ class GsonCustomConverterFactory extends Converter.Factory
   @Override
   public Converter<?, RequestBody> requestBodyConverter(Type type, Annotation[] parameterAnnotations, Annotation[] methodAnnotations, Retrofit retrofit) {
     return gsonConverterFactory.requestBodyConverter(type, parameterAnnotations, methodAnnotations, retrofit);
+  }
+}
+
+/**
+ * This wrapper is to take care of this case:
+ * when the deserialization fails due to JsonParseException and the
+ * expected type is String, then just return the body string.
+ */
+class GsonResponseBodyConverterToString<T> implements Converter<ResponseBody, T> {
+  private final Gson gson;
+  private final Type type;
+
+  GsonResponseBodyConverterToString(Gson gson, Type type) {
+    this.gson = gson;
+    this.type = type;
+  }
+
+  @Override public T convert(ResponseBody value) throws IOException {
+    String returned = value.string();
+    try {
+      return gson.fromJson(returned, type);
+    }
+    catch (JsonParseException e) {
+      return (T) returned;
+    }
   }
 }
