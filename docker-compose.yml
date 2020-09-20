@@ -19,6 +19,7 @@
 # NB: Travis CI (dist: bionic) supports up to v3.7
 # (unless we'd install a more recent version in .travis.yml)
 version: '3.7'
+
 services:
   # Backend service
   fineractmysql:
@@ -34,6 +35,13 @@ services:
       retries: 10
     ports:
       - "3306:3306"
+  adminer:
+    image: adminer
+    restart: always
+    depends_on:
+      - fineractmysql
+    ports:
+      - 9088:8080
   fineract-server:
     build:
       context: .
